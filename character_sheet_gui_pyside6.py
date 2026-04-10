@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 
 
 logger = logging.getLogger(__name__)
+APP_VERSION = "v1.1.0"
 
 
 # ==========================================================
@@ -586,6 +587,7 @@ class MainWindow(QMainWindow):
         act_font = QAction("フォント選択", self)
         act_reset_layout = QAction("レイアウト初期化", self)
         act_reset_theme = QAction("色初期化", self)
+        act_about = QAction("バージョン情報", self)
 
         act_new.triggered.connect(self.load_default_example)
         act_open.triggered.connect(self.open_json)
@@ -595,8 +597,9 @@ class MainWindow(QMainWindow):
         act_font.triggered.connect(self.choose_font)
         act_reset_layout.triggered.connect(self.reset_layout)
         act_reset_theme.triggered.connect(self.reset_theme)
+        act_about.triggered.connect(self.show_version_info)
 
-        for act in [act_new, act_open, act_save_json, act_save_json_as, act_export_png, act_font, act_reset_layout, act_reset_theme]:
+        for act in [act_new, act_open, act_save_json, act_save_json_as, act_export_png, act_font, act_reset_layout, act_reset_theme, act_about]:
             toolbar.addAction(act)
 
     def build_form(self):
@@ -943,6 +946,17 @@ class MainWindow(QMainWindow):
         widgets["zoom_spin"].setValue(100)
         widgets["offset_x"].setValue(0)
         widgets["offset_y"].setValue(0)
+
+    def show_version_info(self):
+        QMessageBox.information(
+            self,
+            "バージョン情報",
+            (
+                "Character Sheet GUI Generator\n"
+                f"Version: {APP_VERSION}\n\n"
+                "この画面は、実行中アプリのバージョン確認用です。"
+            ),
+        )
 
     # ------------------------------
     # Preview
