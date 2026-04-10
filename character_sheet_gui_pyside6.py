@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
-import tempfile
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont, ImageQt
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,6 +33,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 # ==========================================================
@@ -143,8 +146,8 @@ def load_font(size: int, font_path: Optional[str] = None) -> ImageFont.FreeTypeF
         if path and os.path.exists(path):
             try:
                 return ImageFont.truetype(path, size=size)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to load font: %s (%s)", path, e)
 
     return ImageFont.load_default()
 
@@ -265,12 +268,13 @@ def paste_image_panel(
 
     if placement.path and os.path.exists(placement.path):
         try:
-            img = Image.open(placement.path)
+            with Image.open(placement.path) as src_img:
+                img = src_img.copy()
             img = fit_image_with_placement(img, iw, ih, placement)
             canvas.paste(img, (inner[0], inner[1]))
             return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load image: %s (%s)", placement.path, e)
 
     placeholder_text = wrap_text(draw, placeholder, font, max(10, iw - 20))
     tw, th = text_bbox(draw, placeholder_text, font)
@@ -443,6 +447,7 @@ def state_from_json_dict(raw: dict) -> AppState:
 class ColorButton(QPushButton):
     def __init__(self, text: str, initial_rgb: Tuple[int, int, int], parent=None):
         super().__init__(text, parent)
+        self.label_text = text
         self.rgb = initial_rgb
         self.clicked.connect(self.pick_color)
         self.refresh_style()
@@ -460,7 +465,7 @@ class ColorButton(QPushButton):
         self.refresh_style()
 
     def refresh_style(self):
-        self.setText(f"{self.text().split(':')[0]}: {self.rgb}")
+        self.setText(f"{self.label_text}: {self.rgb}")
         r, g, b = self.rgb
         self.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #666; padding: 6px; }}"
@@ -504,6 +509,9 @@ class MainWindow(QMainWindow):
         self.state = AppState()
         self.current_json_path: Optional[str] = None
         self._updating_ui = False
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.timeout.connect(self.refresh_preview)
 
         self.build_ui()
         self.load_default_example()
@@ -941,7 +949,7 @@ class MainWindow(QMainWindow):
     # ------------------------------
     def schedule_preview_update(self):
         self.update_state_from_ui()
-        self.refresh_preview()
+        self._preview_timer.start(120)
 
     def refresh_preview(self):
         try:
@@ -951,6 +959,7 @@ class MainWindow(QMainWindow):
             pixmap = QPixmap.fromImage(qt_image)
             self.preview_label.set_preview_pixmap(pixmap)
         except Exception as e:
+            logger.exception("Failed to refresh preview")
             self.preview_label.setText(f"プレビュー生成失敗\n{e}")
 
     @staticmethod
@@ -962,6 +971,7 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO)
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
