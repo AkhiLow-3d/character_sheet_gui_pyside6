@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
-import tempfile
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont, ImageQt
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,6 +33,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+logger = logging.getLogger(__name__)
+APP_VERSION = "v1.1.0"
 
 
 # ==========================================================
@@ -143,8 +147,8 @@ def load_font(size: int, font_path: Optional[str] = None) -> ImageFont.FreeTypeF
         if path and os.path.exists(path):
             try:
                 return ImageFont.truetype(path, size=size)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to load font: %s (%s)", path, e)
 
     return ImageFont.load_default()
 
@@ -265,12 +269,13 @@ def paste_image_panel(
 
     if placement.path and os.path.exists(placement.path):
         try:
-            img = Image.open(placement.path)
+            with Image.open(placement.path) as src_img:
+                img = src_img.copy()
             img = fit_image_with_placement(img, iw, ih, placement)
             canvas.paste(img, (inner[0], inner[1]))
             return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load image: %s (%s)", placement.path, e)
 
     placeholder_text = wrap_text(draw, placeholder, font, max(10, iw - 20))
     tw, th = text_bbox(draw, placeholder_text, font)
@@ -443,6 +448,7 @@ def state_from_json_dict(raw: dict) -> AppState:
 class ColorButton(QPushButton):
     def __init__(self, text: str, initial_rgb: Tuple[int, int, int], parent=None):
         super().__init__(text, parent)
+        self.label_text = text
         self.rgb = initial_rgb
         self.clicked.connect(self.pick_color)
         self.refresh_style()
@@ -460,7 +466,7 @@ class ColorButton(QPushButton):
         self.refresh_style()
 
     def refresh_style(self):
-        self.setText(f"{self.text().split(':')[0]}: {self.rgb}")
+        self.setText(f"{self.label_text}: {self.rgb}")
         r, g, b = self.rgb
         self.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r}, {g}, {b}); border: 1px solid #666; padding: 6px; }}"
@@ -504,6 +510,9 @@ class MainWindow(QMainWindow):
         self.state = AppState()
         self.current_json_path: Optional[str] = None
         self._updating_ui = False
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.timeout.connect(self.refresh_preview)
 
         self.build_ui()
         self.load_default_example()
@@ -578,6 +587,7 @@ class MainWindow(QMainWindow):
         act_font = QAction("フォント選択", self)
         act_reset_layout = QAction("レイアウト初期化", self)
         act_reset_theme = QAction("色初期化", self)
+        act_about = QAction("バージョン情報", self)
 
         act_new.triggered.connect(self.load_default_example)
         act_open.triggered.connect(self.open_json)
@@ -587,8 +597,9 @@ class MainWindow(QMainWindow):
         act_font.triggered.connect(self.choose_font)
         act_reset_layout.triggered.connect(self.reset_layout)
         act_reset_theme.triggered.connect(self.reset_theme)
+        act_about.triggered.connect(self.show_version_info)
 
-        for act in [act_new, act_open, act_save_json, act_save_json_as, act_export_png, act_font, act_reset_layout, act_reset_theme]:
+        for act in [act_new, act_open, act_save_json, act_save_json_as, act_export_png, act_font, act_reset_layout, act_reset_theme, act_about]:
             toolbar.addAction(act)
 
     def build_form(self):
@@ -936,12 +947,23 @@ class MainWindow(QMainWindow):
         widgets["offset_x"].setValue(0)
         widgets["offset_y"].setValue(0)
 
+    def show_version_info(self):
+        QMessageBox.information(
+            self,
+            "バージョン情報",
+            (
+                "Character Sheet GUI Generator\n"
+                f"Version: {APP_VERSION}\n\n"
+                "この画面は、実行中アプリのバージョン確認用です。"
+            ),
+        )
+
     # ------------------------------
     # Preview
     # ------------------------------
     def schedule_preview_update(self):
         self.update_state_from_ui()
-        self.refresh_preview()
+        self._preview_timer.start(120)
 
     def refresh_preview(self):
         try:
@@ -951,6 +973,7 @@ class MainWindow(QMainWindow):
             pixmap = QPixmap.fromImage(qt_image)
             self.preview_label.set_preview_pixmap(pixmap)
         except Exception as e:
+            logger.exception("Failed to refresh preview")
             self.preview_label.setText(f"プレビュー生成失敗\n{e}")
 
     @staticmethod
@@ -962,6 +985,7 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    logging.basicConfig(level=logging.INFO)
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
